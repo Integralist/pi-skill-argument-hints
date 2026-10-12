@@ -1,0 +1,42 @@
+{
+  "name": "@integralist/pi-skill-argument-hints",
+  "version": "0.1.0",
+  "description": "Pi extension: display skill argument hints from frontmatter as muted inline text",
+  "license": "MIT",
+  "author": "Integralist",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Integralist/pi-skill-argument-hints.git"
+  },
+  "type": "module",
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "files": [
+    "src",
+    "fixtures",
+    "README.md"
+  ],
+  "pi": {
+    "extensions": [
+      "./src/index.ts"
+    ]
+  },
+  "scripts": {
+    "test": "npm run test:unit && npm run test:features",
+    "test:unit": "node --test tests/unit/*.test.ts",
+    "test:features": "cucumber-js tests/features/**/*.feature --import tests/features/**/*.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-agent-core": "*",
+    "@earendil-works/pi-coding-agent": "*",
+    "@earendil-works/pi-tui": "*",
+    "typebox": "*"
+  },
+  "devDependencies": {
+    "@cucumber/cucumber": "^13.3.0",
+    "@types/node": "^24.0.0",
+    "typescript": "^5.8.0"
+  }
+}
