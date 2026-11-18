@@ -1,11 +1,15 @@
 import { Given, When, Then, After, setWorldConstructor } from "@cucumber/cucumber";
 import assert from "node:assert";
 import { writeFileSync, mkdirSync, rmSync } from "node:fs";
-import { resolve, join } from "node:path";
+import { join } from "node:path";
 import { tmpdir } from "node:os";
-import extensionFactory, { buildHintCache } from "../../src/index.ts";
+import extensionFactory from "../../src/index.ts";
 import { ArgumentHintsEditor } from "../../src/editor.ts";
-import { visibleWidth } from "@earendil-works/pi-tui";
+import {
+  type AutocompleteProvider,
+  CombinedAutocompleteProvider,
+  visibleWidth,
+} from "@earendil-works/pi-tui";
 
 interface MockCommand {
   name: string;
@@ -23,6 +27,9 @@ class TestWorld {
   lastExpectedHint: string = "";
   editor?: ArgumentHintsEditor;
   editorFactory?: (tui: any, theme: any, kb: any) => ArgumentHintsEditor;
+  autocompleteProvider?: AutocompleteProvider;
+  autocompleteWrapperCount: number = 0;
+  cwdDir: string = "";
   renderedLines: string[] = [];
   savedInitialText: string = "";
   savedInitialCursor: { line: number; col: number } = { line: 0, col: 0 };
@@ -50,10 +57,23 @@ class TestWorld {
     return skillPath;
   }
 
+  ensureCwdDir(): string {
+    if (!this.cwdDir) {
+      this.cwdDir = join(tmpdir(), `pi-hints-cwd-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+      mkdirSync(this.cwdDir, { recursive: true });
+    }
+    return this.cwdDir;
+  }
+
   cleanup() {
     if (this.tempDir) {
       try {
         rmSync(this.tempDir, { recursive: true, force: true });
+      } catch {}
+    }
+    if (this.cwdDir) {
+      try {
+        rmSync(this.cwdDir, { recursive: true, force: true });
       } catch {}
     }
   }
@@ -75,6 +95,14 @@ class TestWorld {
       mode: this.mode,
       ui: {
         theme: this.mockTheme,
+        addAutocompleteProvider: (wrapper: (current: AutocompleteProvider) => AutocompleteProvider) => {
+          this.autocompleteWrapperCount += 1;
+          const base = new CombinedAutocompleteProvider(
+            this.commands.map((c) => ({ name: c.name })),
+            this.ensureCwdDir(),
+          );
+          this.autocompleteProvider = wrapper(this.autocompleteProvider ?? base);
+        },
         setEditorComponent: (factory: any) => {
           this.customEditorInstalled = true;
           this.editorFactory = factory;
@@ -92,11 +120,24 @@ class TestWorld {
       h({ reason: "startup" }, ctx);
     }
     if (this.editorFactory) {
-      const tui = { terminal: { rows: 24, columns: 80 } };
-      const theme = { borderColor: (s: string) => s, selectList: {} };
+      const tui = { terminal: { rows: 24, columns: 80 }, requestRender: () => {} };
+      const identity = (s: string) => s;
+      const theme = {
+        borderColor: identity,
+        selectList: {
+          selectedPrefix: identity,
+          selectedText: identity,
+          description: identity,
+          scrollInfo: identity,
+          noMatch: identity,
+        },
+      };
       const kb = { matches: () => false, getKeys: () => [] };
       this.editor = this.editorFactory(tui, theme, kb);
       this.editor.focused = true;
+      if (this.autocompleteProvider) {
+        this.editor.setAutocompleteProvider(this.autocompleteProvider);
+      }
     }
   }
 
@@ -106,6 +147,11 @@ class TestWorld {
     for (const h of handlers) {
       h({ reason: "reload" }, ctx);
     }
+    assert.strictEqual(
+      this.autocompleteWrapperCount,
+      1,
+      "Autocomplete provider should only be registered once across session_start events",
+    );
   }
 }
 
@@ -289,4 +335,63 @@ Then("the editor displays the updated hint", function (this: TestWorld) {
 
 Then("it does not install a custom terminal editor", function (this: TestWorld) {
   assert.strictEqual(this.customEditorInstalled, false, "Custom editor should not be installed in non-TUI mode");
+});
+
+Given("the working directory contains a file {string}", function (this: TestWorld, fileName: string) {
+  const dir = this.ensureCwdDir();
+  writeFileSync(join(dir, fileName), `# ${fileName}\n`);
+});
+
+When("the user types {string} and presses Tab", async function (this: TestWorld, text: string) {
+  assert.ok(this.editor, "Editor must be initialized");
+  this.editor.setText(text);
+  this.editor.handleInput("\t");
+  await new Promise((r) => setTimeout(r, 15));
+  this.renderedLines = this.editor.render(80);
+});
+
+When("the user fuzzy-types {string} and presses Tab", async function (this: TestWorld, text: string) {
+  assert.ok(this.editor, "Editor must be initialized");
+  for (const ch of text) {
+    this.editor.handleInput(ch);
+  }
+  await new Promise((r) => setTimeout(r, 15));
+  this.editor.handleInput("\t");
+  await new Promise((r) => setTimeout(r, 15));
+  this.renderedLines = this.editor.render(80);
+});
+
+Then("the autocomplete menu lists {string} and {string}", function (this: TestWorld, first: string, second: string) {
+  assert.ok(this.editor?.isShowingAutocomplete(), "Expected autocomplete menu to be open");
+  const joined = this.renderedLines.join("\n");
+  assert.ok(joined.includes(first), `Expected autocomplete menu to include "${first}"`);
+  assert.ok(joined.includes(second), `Expected autocomplete menu to include "${second}"`);
+});
+
+Then("the editor text becomes {string}", function (this: TestWorld, expected: string) {
+  assert.ok(this.editor, "Editor must be initialized");
+  assert.strictEqual(this.editor.getText(), expected);
+});
+
+Then("the editor completes or suggests {string} instead of {string}", function (
+  this: TestWorld,
+  expectedFile: string,
+  placeholder: string,
+) {
+  assert.ok(this.editor, "Editor must be initialized");
+  const text = this.editor.getText();
+  const joined = this.renderedLines.join("\n");
+  assert.ok(!text.includes(placeholder), `Editor text must not insert "${placeholder}"`);
+  assert.ok(
+    text.includes(expectedFile) || joined.includes(expectedFile),
+    `Expected file "${expectedFile}" to be completed or listed`,
+  );
+});
+
+Then("the editor does not insert {string}", function (this: TestWorld, proseHint: string) {
+  assert.ok(this.editor, "Editor must be initialized");
+  assert.ok(
+    !this.editor.getText().includes(proseHint),
+    `Editor text must not insert prose hint "${proseHint}"`,
+  );
 });

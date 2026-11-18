@@ -1,7 +1,14 @@
-import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { createHintAutocompleteProvider } from "./argument-completion.ts";
 import { ArgumentHintsEditor } from "./editor.ts";
 import { extractArgumentHint } from "./hint-extractor.ts";
 
+export {
+  createHintAutocompleteProvider,
+  parseArgumentHint,
+  type ParsedArgumentHint,
+  type ParsedFlag,
+} from "./argument-completion.ts";
 export { ArgumentHintsEditor } from "./editor.ts";
 export { extractArgumentHint, extractArgumentHintFromContent } from "./hint-extractor.ts";
 
@@ -36,6 +43,7 @@ export function buildHintCache(pi: ExtensionAPI): Map<string, string> {
 
 export default function (pi: ExtensionAPI): void {
   const hintCache = new Map<string, string>();
+  let autocompleteProviderRegistered = false;
 
   pi.on("session_start", (_event, ctx) => {
     // Rebuild cache on startup and reload
@@ -48,6 +56,13 @@ export default function (pi: ExtensionAPI): void {
     // Only install custom editor in TUI mode
     if (!ctx.hasUI || typeof ctx.ui?.setEditorComponent !== "function") {
       return;
+    }
+
+    if (!autocompleteProviderRegistered && typeof ctx.ui.addAutocompleteProvider === "function") {
+      autocompleteProviderRegistered = true;
+      ctx.ui.addAutocompleteProvider((current) =>
+        createHintAutocompleteProvider(current, hintCache),
+      );
     }
 
     ctx.ui.setEditorComponent((tui, theme, kb) => {

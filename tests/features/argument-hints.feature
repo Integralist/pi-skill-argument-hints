@@ -35,3 +35,22 @@ Feature: Pi skill argument hints
     Given Pi starts in a non-TUI mode
     When the extension starts
     Then it does not install a custom terminal editor
+
+  Scenario: Tab-complete and fuzzy-filter skill flags
+    Given a loaded skill declares argument-hint: "[--edit] [--days N]"
+    When the user types "/skill:talking-points " and presses Tab
+    Then the autocomplete menu lists "--edit" and "--days"
+    When the user fuzzy-types "dy" and presses Tab
+    Then the editor text becomes "/skill:talking-points --days "
+
+  Scenario: Tab-complete real files for path placeholders
+    Given a loaded skill declares argument-hint: "<plan-path>"
+    And the working directory contains a file "plan.md"
+    When the user types "/skill:talking-points " and presses Tab
+    Then the editor completes or suggests "plan.md" instead of "<plan-path>"
+
+  Scenario: Never insert plain-sentence hints on Tab
+    Given a loaded skill declares argument-hint: "Optional topic to teach"
+    And the working directory contains a file "notes.md"
+    When the user types "/skill:talking-points " and presses Tab
+    Then the editor does not insert "Optional topic to teach"
